@@ -1,6 +1,8 @@
 # Окончания строк - LF и в репозитории, и на диске (у всех, независимо от core.autocrlf): без предупреждений
 # «LF will be replaced by CRLF», .sh-скрипты не ломаются от CRLF
 * text=auto eol=lf
+# батники - CRLF (cmd с LF путает метки goto)
+*.bat text eol=crlf
 
 # 3D-модели и архивы - как есть, без преобразования строк
 *.step -text

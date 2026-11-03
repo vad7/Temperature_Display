@@ -1,7 +1,8 @@
 # Шрифт интерфейса для Adafruit GFX (формат GFXfont) из DejaVu Sans - только символы, которые выводит прошивка.
 #   python Scripts/gen_font.py   -> TempDisplay/include/font_ui_s.h (12 px, 128x160), font_ui_l.h (20 px, 240x320)
 #                                   + work/png/font_preview.png (строка из сгенерированных битов, x3)
-# Набор символов: строки PSTR("...") в TempDisplay/src/*.cpp + ALWAYS (цифры и знаки чисел). После изменения текстов
+# Набор символов: строки PSTR("...") в TempDisplay/src/*.cpp, названия пунктов настроек в TempDisplay/include/menu.h
+# + ALWAYS (цифры и знаки чисел). После изменения текстов
 # на экране - перезапустить (скилл build-check), иначе новый символ не нарисуется.
 # Коды: символы чисел (ASCII из ALWAYS: цифры, знаки) - свои коды 0x20 .. FONT_ASCII_LAST; все остальные (буквы,
 # в т. ч. латинские, «°») - подряд следом по возрастанию Unicode; таблица FontUiMap[] (Unicode) - для перекодировки
@@ -19,7 +20,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TTF = os.path.join(matplotlib.get_data_path(), "fonts", "ttf", "DejaVuSans.ttf")
 FIRST = 0x20
 THRESHOLD = 110                          # порог 1 бит из сглаженного растра (0..255)
-ALWAYS = "0123456789-.%: " + "°"     # выводятся числами / знаками, не строками PSTR
+ALWAYS = "0123456789-.%:/, " + "°"   # выводятся числами / знаками, не строками PSTR («/» - счётчик ошибок,
+                                     # «,» - ASCII со своим кодом, иначе попадёт и в таблицу Unicode)
 FONTS = (                                # (имя в C, размер в пикселях, файл)
     ("FontUiS", 12, "font_ui_s.h"),      # экраны 128x160
     ("FontUiL", 20, "font_ui_l.h"),      # экран 240x320
@@ -32,6 +34,10 @@ def used_chars():
         src = open(path, encoding="utf-8").read()
         for s in re.findall(r'PSTR\("((?:[^"\\]|\\.)*)"\)', src):
             chars.update(s)
+    # названия пунктов настроек - список MENU_ITEMS: X(ITEM_..., "...")
+    src = open(os.path.join(ROOT, "TempDisplay", "include", "menu.h"), encoding="utf-8").read()
+    for s in re.findall(r'X\(\s*ITEM_\w+\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)', src):
+        chars.update(s)
     return chars
 
 

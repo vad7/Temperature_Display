@@ -8,8 +8,12 @@ void       begin();
 void       update(uint32_t now, uint8_t pollS, bool heater);  // в каждом проходе loop(); heater - опция прогрева
 bool       heating();                            // SHT40 остывает после импульса нагревателя (показания не обновляются)
 bool       takeFresh();                          // есть новое измерение с прошлого вызова (флаг сбрасывается)
-SensorKind kind();                               // None - датчика нет (идёт повторный поиск)
-int16_t    tempC10();                            // последнее измерение, десятые °C
+SensorKind kind();                               // None - датчик не найден при включении
+bool       failed();                             // последнее измерение пропало (все повторы неудачны)
+uint16_t   errReads();                           // неудачных чтений с включения (с повторами)
+uint16_t   errLost();                            // пропавших измерений с включения
+void       resetErrors();
+int16_t    tempC10();                            // последнее измерение + поправка «Корр. °», десятые °C
 bool       hasHumidity();                        // только SHT40
 uint8_t    humidity();                           // %, 0..100
 }

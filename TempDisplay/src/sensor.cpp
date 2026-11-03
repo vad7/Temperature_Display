@@ -6,6 +6,7 @@
 //  DS18B20 - DallasTemperature в асинхронном режиме: запуск преобразования, через DS18B20_CONV_MS - чтение.
 // Шина I2C - I2C_CLOCK_HZ (провод до улицы).
 #include "sensor.h"
+#include "settings.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <OneWire.h>
@@ -19,6 +20,9 @@
 #define SHT_MEAS_MS         10UL     // tMEAS,h - до 8.3 мс
 #define SHT_HEAT_MS         1100UL   // tHeater (длинный импульс) - до 1 с + измерение
 #define SHT_RESP_LEN        6        // T[2] CRC RH[2] CRC
+#define SHT_RESP_T          0        // ответ: T - старший, младший байт, CRC
+#define SHT_RESP_RH         3        //                  RH - старший, младший байт, CRC
+#define SHT_WORD_LEN        2        // слово данных перед своим CRC
 #define SHT_CRC_POLY        0x31     // x^8 + x^5 + x^4 + 1
 #define SHT_CRC_INIT        0xFF
 #define SHT_FULL_SCALE      65535L   // 2^16 - 1
@@ -41,9 +45,13 @@ Sht        s_sht = Sht::Idle;        // SHT40: ждём результат из�
 uint8_t    s_shtAddr;
 int16_t    s_tempC10;
 uint8_t    s_hum;
-uint8_t    s_errors;
+uint8_t    s_tries;                  // повторов текущего измерения
+bool       s_failed;                 // последнее измерение пропало
+bool       s_retryWait;              // ждём паузу перед повтором (с s_tCmd)
+uint16_t   s_errReads;               // неудачных чтений с включения
+uint16_t   s_errLost;                // пропавших измерений с включения
 uint32_t   s_tPoll;                  // время последнего запуска измерения / поиска
-uint32_t   s_tCmd;                   // время команды SHT40
+uint32_t   s_tCmd;                   // время команды SHT40 / запуска преобразования DS18B20 / неудачного чтения
 bool       s_started;                // был хотя бы один запуск (первый - сразу после старта)
 bool       s_heated;                 // был импульс нагревателя (s_tHeat действителен)
 uint32_t   s_tHeat;                  // конец последнего импульса
@@ -78,9 +86,10 @@ bool shtRead(int16_t& tC10, uint8_t& rh)
     uint8_t b[SHT_RESP_LEN];
     if (Wire.requestFrom(s_shtAddr, (uint8_t)SHT_RESP_LEN) != SHT_RESP_LEN) return false;
     for (uint8_t i = 0; i < SHT_RESP_LEN; i++) b[i] = (uint8_t)Wire.read();
-    if (crc8(b, 2) != b[2] || crc8(b + 3, 2) != b[5]) return false;
-    const uint16_t st  = (uint16_t)b[0] << 8 | b[1];
-    const uint16_t srh = (uint16_t)b[3] << 8 | b[4];
+    if (crc8(b + SHT_RESP_T, SHT_WORD_LEN) != b[SHT_RESP_T + SHT_WORD_LEN]
+        || crc8(b + SHT_RESP_RH, SHT_WORD_LEN) != b[SHT_RESP_RH + SHT_WORD_LEN]) return false;
+    const uint16_t st  = (uint16_t)b[SHT_RESP_T] << 8 | b[SHT_RESP_T + 1];
+    const uint16_t srh = (uint16_t)b[SHT_RESP_RH] << 8 | b[SHT_RESP_RH + 1];
     tC10 = (int16_t)(((int32_t)st * SHT_T_SPAN_C10 + SHT_FULL_SCALE / 2) / SHT_FULL_SCALE) - SHT_T_OFFS_C10;
     const int32_t h = ((int32_t)srh * SHT_RH_SPAN + SHT_FULL_SCALE / 2) / SHT_FULL_SCALE - SHT_RH_OFFS;
     rh = h < 0 ? 0 : h > RH_MAX ? RH_MAX : (uint8_t)h;           // даташит 4.6: ограничить 0..100 %
@@ -106,15 +115,39 @@ bool detect()
 void store(int16_t tC10)
 {
     s_tempC10 = tC10;
-    s_errors  = 0;
+    s_tries   = 0;
+    s_failed  = false;
     s_fresh   = true;
 }
 
-void fail()
+// Неудачное чтение: повтор после паузы (SHT_RETRY_MS / DS18B20_RETRY_MS); после SENSOR_RETRIES повторов
+// измерение пропало (до следующего периода)
+void fail(uint32_t now)
 {
-    if (++s_errors >= SENSOR_MAX_ERRORS) {
-        s_kind   = SensorKind::None;      // потерян - со следующего периода снова поиск
-        s_errors = 0;
+    if (s_errReads < UINT16_MAX) s_errReads++;
+    if (s_tries < SENSOR_RETRIES) {
+        s_tries++;
+        s_retryWait = true;
+        s_tCmd = now;
+        return;
+    }
+    s_tries  = 0;
+    s_failed = true;
+    if (s_errLost < UINT16_MAX) s_errLost++;
+}
+
+// Запуск измерения: SHT40 - команда, DS18B20 - преобразование (результат - через DS18B20_CONV_MS)
+void measure(uint32_t now)
+{
+    if (s_kind == SensorKind::Ds18b20) {
+        s_ds.requestTemperatures();
+        s_dsWaiting = true;
+        s_tCmd = now;
+    } else if (shtCommand(SHT_CMD_MEAS_HIGH)) {
+        s_sht  = Sht::Measuring;
+        s_tCmd = now;
+    } else {
+        fail(now);
     }
 }
 
@@ -126,17 +159,18 @@ void shtFinish(uint32_t now)
     int16_t t;
     uint8_t rh;
     const bool ok = shtRead(t, rh);
-    if (s_sht == Sht::Heating) {                  // измерение с нагревом - не используется
+    const bool heat = s_sht == Sht::Heating;
+    s_sht = Sht::Idle;
+    if (heat) {                                   // измерение с нагревом - не используется
         s_tHeat  = now;
         s_heated = true;
-        if (!ok) fail();
+        if (!ok && s_errReads < UINT16_MAX) s_errReads++;
     } else if (ok) {
         s_hum = rh;
         store(t);
     } else {
-        fail();
+        fail(now);
     }
-    s_sht = Sht::Idle;
 }
 }  // namespace
 
@@ -155,12 +189,19 @@ void update(uint32_t now, uint8_t pollS, bool heater)
 {
     if (s_kind == SensorKind::Sht40 && s_sht != Sht::Idle) { shtFinish(now); return; }
 
+    if (s_retryWait) {                             // пауза перед повтором
+        if (now - s_tCmd < (s_kind == SensorKind::Ds18b20 ? DS18B20_RETRY_MS : SHT_RETRY_MS)) return;
+        s_retryWait = false;
+        measure(now);
+        return;
+    }
+
     // DS18B20: дождаться конца преобразования
     if (s_dsWaiting) {
-        if (now - s_tPoll < DS18B20_CONV_MS) return;
+        if (now - s_tCmd < DS18B20_CONV_MS) return;
         s_dsWaiting = false;
-        const float t = s_ds.getTempCByIndex(0);
-        if (t == DEVICE_DISCONNECTED_C) fail();
+        const float t = s_ds.getTempCByIndex(0);   // -127: нет ответа на шине или CRC блокнота не сошлась
+        if (t == DEVICE_DISCONNECTED_C) fail(now);
         else                            store((int16_t)lroundf(t * 10.0f));
         return;
     }
@@ -170,23 +211,19 @@ void update(uint32_t now, uint8_t pollS, bool heater)
     s_tPoll   = now;
 
     switch (s_kind) {
-        case SensorKind::None:
-            if (detect()) s_started = false;   // нашёлся - первое измерение сразу
+        case SensorKind::None:                    // не найден при включении - не ищем
             break;
         case SensorKind::Sht40:
             if (cooling(now)) break;              // после нагрева показания не берём
             if (heater && s_hum >= HEATER_RH_ON && s_tempC10 < HEATER_MAX_T_C10
                 && (!s_heated || now - s_tHeat >= HEATER_INTERVAL_S * 1000UL)) {
-                if (shtCommand(SHT_CMD_HEAT_110_1S)) { s_sht = Sht::Heating; s_tCmd = now; }
-                else fail();
-                break;
+                if (shtCommand(SHT_CMD_HEAT_110_1S)) { s_sht = Sht::Heating; s_tCmd = now; break; }
+                if (s_errReads < UINT16_MAX) s_errReads++;   // нагрев не начался - обычное измерение
             }
-            if (shtCommand(SHT_CMD_MEAS_HIGH)) { s_sht = Sht::Measuring; s_tCmd = now; }
-            else fail();
+            measure(now);
             break;
         case SensorKind::Ds18b20:
-            s_ds.requestTemperatures();
-            s_dsWaiting = true;
+            measure(now);
             break;
     }
 }
@@ -199,7 +236,11 @@ bool takeFresh()
 }
 
 SensorKind kind()        { return s_kind; }
-int16_t    tempC10()     { return s_tempC10; }
+bool       failed()      { return s_failed; }
+uint16_t   errReads()    { return s_errReads; }
+uint16_t   errLost()     { return s_errLost; }
+void       resetErrors() { s_errReads = 0; s_errLost = 0; }
+int16_t    tempC10()     { return s_tempC10 + Cfg::s.corrC10; }   // с поправкой «Корр. °» (прогрев - по сырой)
 bool       hasHumidity() { return s_kind == SensorKind::Sht40; }
 uint8_t    humidity()    { return s_hum; }
 bool       heating()     { return s_kind == SensorKind::Sht40 && (s_sht == Sht::Heating || cooling(millis())); }

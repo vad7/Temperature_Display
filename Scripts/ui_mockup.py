@@ -1,5 +1,6 @@
 # Макет экранов термометра без железа: повторяет разметку и рисование TempDisplay/src/ui.cpp (Readme §6).
-#   python Scripts/ui_mockup.py   ->  Docs/ui_mockup_320x240.png, Docs/ui_mockup_160x128.png (картинки Readme §6)
+#   python Scripts/ui_mockup.py   ->  Docs/ui_mockup_320x240.png, _160x128.png (альбомная), _240x320.png, _128x160.png
+#   (книжная: «Поворот» 90 / 270°) - картинки Readme §6
 # Константы разметки - из ui.cpp, цвета и параметры - из config.h, текст - тем же шрифтом font_ui_*.h (биты как в GFX,
 # границы строки - как Adafruit_GFX::getTextBounds). При изменении функций рисования в ui.cpp - обновить здесь.
 import math
@@ -28,6 +29,10 @@ def defines(path):
 
 CFG = defines(os.path.join(SRC, "include", "config.h"))
 UIC = defines(os.path.join(SRC, "src", "ui.cpp"))
+# пункты настроек - порядок и названия из menu.h (MENU_ITEMS: X(ITEM_..., "..."))
+MENU = re.findall(r'X\(\s*(ITEM_\w+)\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)',
+                  open(os.path.join(SRC, "include", "menu.h"), encoding="utf-8").read())
+ITEM = {name: i for i, (name, _) in enumerate(MENU)}
 
 
 def rgb(c565):
@@ -148,8 +153,12 @@ class Ui:
         _, y1, _, h = g.bounds("ЙКу")
         self.asc, self.lh = -y1, h + 1
         self.aw = self.w * UIC["ARROW_W_PCT"] // 100
-        zx, zy = self.m, self.m + self.lh + self.m // 2
-        zw, zh = self.w - 2 * self.m - self.aw, self.h - 2 * (self.m + self.lh) - self.m
+        self.hum_y = self.h - self.m - self.lh
+        land = self.w >= self.h
+        band = 2 * self.lh + self.m // 2                   # книжная: строки макс и мин
+        zx, zy = self.m, (self.m + self.lh + self.m // 2) if land else self.m
+        zw = self.w - 2 * self.m - self.aw if land else self.w - 2 * self.m
+        zh = self.h - 2 * (self.m + self.lh) - self.m if land else self.hum_y - band - 3 * self.m
         self.dh = zh * UIC["DIGIT_FILL_PCT"] // 100
         self.dw = self.dh * UIC["DIGIT_ASPECT_PCT"] // 100
         dw_max = zw * 10 // UIC["DIGIT_W_DIV10"]
@@ -158,8 +167,19 @@ class Ui:
             self.dh = self.dw * 100 // UIC["DIGIT_ASPECT_PCT"]
         self.t = max(2, self.dw // UIC["SEG_T_DIV"])
         total = self.dw * UIC["DIGIT_W_DIV10"] // 10
-        self.dx, self.dy = zx + (zw - total) // 2, zy + (zh - self.dh) // 2
-        self.ax, self.ay, self.ah = self.w - self.m - self.aw, zy, zh
+        self.dx = zx + (zw - total) // 2
+        self.ax = self.w - self.m - self.aw
+        if land:
+            self.dy = zy + (zh - self.dh) // 2
+            self.max_y, self.min_y, self.ay, self.ah = self.m, self.hum_y, zy, zh
+        else:                                               # равные зазоры: цифры, макс / мин со стрелкой, влажность
+            gap = (self.hum_y - self.m - self.dh - band) // 3
+            self.dy = self.m + gap
+            self.max_y = self.dy + self.dh + gap
+            self.min_y, self.ay, self.ah = self.max_y + band - self.lh, self.max_y, band
+
+    def mm_x(self):                                         # s_mmX: правый край мин / макс
+        return self.m + self.g.text_width(self.c10(UIC["MINMAX_WIDEST_C10"]) + DEG)
 
     def text(self, x, top, align, s, c):
         w = self.g.text_width(s)
@@ -204,34 +224,34 @@ class Ui:
         for i in range(4):
             self.draw_cell(self.cell_x(i), m[i])
 
-    def draw_temp_static(self):
+    def draw_temp_static(self):                             # точка («°» у крупных цифр нет)
         x_dot = self.dx + 3 * (self.dw + self.t)
         self.g.fill_rect(x_dot, self.dy + self.dh - self.t, self.t, self.t, C["COL_TEMP"])
-        r = self.dw // 5
-        cx, cy = self.cell_x(3) + self.dw + self.t + r, self.dy + r
-        self.g.fill_circle(cx, cy, r, C["COL_TEMP"])
-        self.g.fill_circle(cx, cy, r - (self.t + 1) // 2, C["COL_BG"])
 
     def draw_arrow(self, d):
         if not d:
             return
         cx, cy = self.ax + self.aw // 2, self.ay + self.ah // 2
-        a = min(self.aw // 2 - 1, self.ah // 3)
-        sw, sh = max(2, a // 2), a
+        ln = min(self.dh, self.ah) * UIC["ARROW_LEN_PCT"] // 100
+        hh = ln * UIC["ARROW_HEAD_PCT"] // 100
+        hw = min(self.aw // 2 - 1, hh * UIC["ARROW_HEAD_W_PCT"] // 200)
+        sw = max(2, hw * 2 * UIC["ARROW_STEM_W_PCT"] // 100)
+        tip = cy - ln // 2 if d > 0 else cy + ln // 2
+        base = tip + hh if d > 0 else tip - hh
         col = C["COL_UP"] if d > 0 else C["COL_DOWN"]
+        self.g.fill_triangle(cx, tip, cx - hw, base, cx + hw, base, col)
         if d > 0:
-            self.g.fill_triangle(cx, cy - a - sh // 2, cx - a, cy - sh // 2, cx + a, cy - sh // 2, col)
-            self.g.fill_rect(cx - sw // 2, cy - sh // 2, sw, sh + a // 2, col)
+            self.g.fill_rect(cx - sw // 2, base, sw, cy + ln // 2 - base, col)
         else:
-            self.g.fill_triangle(cx, cy + a + sh // 2, cx - a, cy + sh // 2, cx + a, cy + sh // 2, col)
-            self.g.fill_rect(cx - sw // 2, cy - sh // 2 - a // 2, sw, sh + a // 2, col)
+            self.g.fill_rect(cx - sw // 2, cy - ln // 2, sw, base - (cy - ln // 2), col)
 
     @staticmethod
     def c10(v):
         return ("-" if v < 0 else "") + "%d.%d" % (abs(v) // 10, abs(v) % 10)
 
-    def main(self, sensor, t_c10=0, hum=None, heating=False, trend=None, mn=None, mx=None):
-        """sensor: None / 'sht' / 'ds'; trend: изменение за период, десятые °C (None - мало данных)."""
+    def main(self, sensor, t_c10=0, hum=None, heating=False, trend=None, mn=None, mx=None, failed=False):
+        """sensor: None / 'sht' / 'ds'; trend: изменение за период, десятые °C (None - мало данных);
+        failed - последнее измерение пропало (ошибка датчика)."""
         g = self.g
         g.fill_screen(C["COL_BG"])
         ok = sensor is not None
@@ -242,15 +262,30 @@ class Ui:
         if ok and trend is not None:
             d = 1 if trend >= thr else -1 if trend <= -thr else 0
         self.draw_arrow(d)
-        top, bot = self.m, self.h - self.m - self.lh
+        top, bot = self.max_y, self.min_y
         if mx is not None:
-            self.text(self.m, top, 0, "макс " + self.c10(mx) + DEG, C["COL_TEXT"])
+            self.text(self.mm_x(), top, 1, self.c10(mx) + DEG, C["COL_MAX"])
         if not ok:
-            self.text(self.m, bot, 0, "нет датчика", C["COL_UP"])
+            self.text(self.m, bot, 0, "нет датчика", C["COL_ERR"])
+        elif failed:
+            self.text(self.m, bot, 0, "ошибка датчика", C["COL_ERR"])
         elif mn is not None:
-            self.text(self.m, bot, 0, "мин " + self.c10(mn) + DEG, C["COL_TEXT"])
+            self.text(self.mm_x(), bot, 1, self.c10(mn) + DEG, C["COL_MIN"])
         if ok and sensor == "sht" and hum is not None:
-            self.text(self.w - self.m, bot, 1, "%d%%" % hum, C["COL_EDIT"] if heating else C["COL_TEXT"])
+            self.text(self.w - self.m, self.hum_y, 1, "%d%%" % hum, C["COL_EDIT"] if heating else C["COL_TEXT"])
+
+    def splash(self, sensor):
+        """Заставка при включении (showSplash в ui.cpp)."""
+        self.g.fill_screen(C["COL_BG"])
+        step = self.lh * 3 // 2
+        top = (self.h - 3 * step - self.lh) // 2
+        sens = {"sht": ("5НТ40: а4 а5", C["COL_TEMP"]),
+                "ds": ("Дс18В20: Д%d" % CFG["PIN_ONEWIRE"], C["COL_TEMP"]),
+                None: ("нет датчика", C["COL_ERR"])}[sensor]
+        lines = (("Термометр", C["COL_EDIT"]), ("версия " + CFG["FW_VERSION"].strip('"'), C["COL_TEXT"]),
+                 ("автор Вадим", C["COL_TEXT"]), sens)
+        for i, (s, c) in enumerate(lines):
+            self.text(self.w // 2, top + i * step, 2, s, c)
 
     def graph(self, pts):
         """pts - точки графика от старой к новой, None - нет данных."""
@@ -258,7 +293,8 @@ class Ui:
         g.fill_screen(C["COL_BG"])
         vals = [v for v in pts if v is not None]
         if not vals:
-            self.text(self.w // 2, (self.h - self.lh) // 2, 2, "нет данных за сутки", C["COL_TEXT"])
+            self.text(self.w // 2, (self.h - self.lh) // 2, 2, "точки через %d мин" % (CFG["GRAPH_SLOT_S"] // 60),
+                      C["COL_TEXT"])
             return
         vmin, vmax = min(vals), max(vals)
         if vmax - vmin < 10:
@@ -268,10 +304,13 @@ class Ui:
         x1 = self.w - self.m - 1
         y0, y1 = self.m + self.asc // 2, self.h - self.m - self.lh - 3
         pw, ph = x1 - x0, y1 - y0
+        lbl_h, lbl_w = CFG["GRAPH_LABEL_H"], g.text_width("-24ч") + 1   # не помещаются - реже вдвое
+        while lbl_h * pw // 24 < lbl_w and lbl_h < 24:
+            lbl_h *= 2
         g.hline(x0, y1, pw + 1, C["COL_GRID"])
         for hr in range(0, 25, CFG["GRAPH_TICK_H"]):
             x = x1 - hr * pw // 24
-            if hr % CFG["GRAPH_LABEL_H"] == 0:
+            if hr % lbl_h == 0:
                 g.vline(x, y0, ph, C["COL_GRID"])
                 if 0 < hr < 24:
                     self.text(x, y1 + 3, 2, "-%dч" % hr, C["COL_TEXT"])
@@ -295,21 +334,32 @@ class Ui:
                 g.pixel(x, y, C["COL_PLOT"])
             prev = (x, y)
 
-    def settings(self, item, edit=False, values=("10 с", "1 ч", "0.5" + DEG, "выкл", "выкл"), edit_value=None):
+    VALUES = {"ITEM_THR": "0.5" + DEG, "ITEM_TREND": "30 м", "ITEM_MINMAX": "12 ч", "ITEM_POLL": "10 с",
+              "ITEM_HEATER": "нет", "ITEM_CORR": "0.0" + DEG, "ITEM_ROT": "0" + DEG, "ITEM_SWAP": "нет", "ITEM_BRIGHT": "100%",
+              "ITEM_ERRORS": "37/2"}
+
+    def settings(self, item, edit=False, edit_value=None):
+        """item - имя пункта ITEM_* (menu.h)."""
+        item = ITEM[item]
         g = self.g
         g.fill_screen(C["COL_BG"])
         self.text(self.w // 2, self.m, 2, "Настройки", C["COL_EDIT"])
-        labels = ("Опрос датчика", "Тенденция за", "Порог стрелки", "Прогрев датчика", "Переворот")
-        rs = min(self.lh + self.m, (self.h - 3 * self.m - 2 * self.lh - self.m) // len(labels))   # rowStep()
-        for i, lab in enumerate(labels):
-            top = self.m + self.lh + self.m + i * rs
+        labels = [lab for _, lab in MENU]
+        list_h = self.h - 3 * self.m - 2 * self.lh - self.m                 # listH()
+        rs = max(self.lh + 1, min(self.lh + self.m, list_h // len(labels)))  # rowStep()
+        rows = min(len(labels), list_h // rs)                               # rowsVisible()
+        first = max(0, item - rows + 1)                                     # scrollToItem() от первого пункта
+        for i in range(first, first + rows):
+            lab = labels[i]
+            top = self.m + self.lh + self.m + (i - first) * rs
             sel = i == item
             g.fill_rect(0, top - (rs - self.lh) // 2, self.w, rs, C["COL_SEL"] if sel else C["COL_BG"])
             self.text(self.m, top, 0, lab, C["COL_TEXT"])
-            val = edit_value if (sel and edit and edit_value) else values[i]
+            val = edit_value if (sel and edit and edit_value) else self.VALUES[MENU[i][0]]
             self.text(self.w - self.m, top, 1, val, C["COL_EDIT"] if (sel and edit) else C["COL_TEMP"])
         top = self.h - self.m - self.lh
-        self.text(self.w // 2, top, 2, "ДН Кн.1 - сохранить" if edit else "ДН Кн.1 - правка", C["COL_TEXT"])
+        hint = "ДН Кн.1 - сохранить" if edit else "ДН Кн.1 - сброс" if item == ITEM["ITEM_ERRORS"] else "ДН Кн.1 - правка"
+        self.text(self.w // 2, top, 2, hint, C["COL_TEXT"])
 
 
 # ---------------------------------------------------------------- сценарии
@@ -335,10 +385,15 @@ def scenarios(w, h):
     shot("DS18B20, стабильно", lambda u: u.main("ds", 56, None, False, 2, 41, 63))
     shot("нет датчика", lambda u: u.main(None, 0, None, False, None, 41, 63))
     shot("график за сутки (Кн.1)", lambda u: u.graph(graph_points()))
-    shot("настройки (Кн.2 / ДН Кн.1)", lambda u: u.settings(1))
-    shot("правка: прогрев", lambda u: u.settings(3, True, edit_value="вкл"))
-    shot("правка: переворот экрана", lambda u: u.settings(4, True, edit_value="вкл"))
+    shot("настройки (Кн.2 / ДН Кн.1)", lambda u: u.settings("ITEM_TREND"))
+    shot("правка: корр. температуры", lambda u: u.settings("ITEM_CORR", True, edit_value="-1.2" + DEG))
+    shot("правка: яркость (x - ШИМ 31 кГц)", lambda u: u.settings("ITEM_BRIGHT", True, edit_value="50%x"))
     shot("100+ и знак: 104.5", lambda u: u.main("ds", 1045, None, False, None, 990, 1045))
+    shot("заставка (3 с или кнопка)", lambda u: u.splash("sht"))
+    shot("заставка: DS18B20", lambda u: u.splash("ds"))
+    shot("ошибка датчика (старое значение)", lambda u: u.main("sht", -123, 87, False, -8, -141, -98, True))
+    shot("правка: мин/макс за", lambda u: u.settings("ITEM_MINMAX", True, edit_value="24 ч"))
+    shot("ошибки датчика (ДН Кн.1 - сброс)", lambda u: u.settings("ITEM_ERRORS"))
     return shots
 
 
@@ -375,4 +430,6 @@ def singles(w, h, names):
 if __name__ == "__main__":
     sheet(320, 240, 2)
     sheet(160, 128, 3)
+    sheet(240, 320, 2)                                      # «Поворот» 90 / 270°
+    sheet(128, 160, 3)
     singles(320, 240, {0: "ui_main", 4: "ui_graph"})

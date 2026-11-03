@@ -4,7 +4,8 @@
 #include "buttons.h"
 
 namespace Ui {
-void begin();                              // экран, подсветка, главный экран
+void begin();                              // экран, заставка без датчика, подсветка
+void showSensor();                         // строка датчика на заставке (после Sensor::begin), отсчёт SPLASH_MS
 void onData();                             // новое измерение / смена датчика - обновить значения
 void update(uint32_t now, BtnEvent e);     // в каждом проходе loop()
 }

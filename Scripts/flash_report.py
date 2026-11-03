@@ -1,5 +1,5 @@
 # Разбор flash прошивки по группам (по именам символов avr-nm).
-#   python Scripts/flash_report.py [окружение]      (по умолчанию promini; прошивка должна быть собрана)
+#   python Scripts/flash_report.py [окружение]      (по умолчанию nano8; прошивка должна быть собрана)
 # LTO встраивает функции друг в друга: часть нашего кода и библиотек попадает в `main` и в функции экрана -
 # группа «main (+ встроенное)» поэтому велика. «Не по символам» - векторы прерываний, код запуска, выравнивание.
 import os
@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENV = sys.argv[1] if len(sys.argv) > 1 else "promini"
+ENV = sys.argv[1] if len(sys.argv) > 1 else "nano8"
 ELF = os.path.join(ROOT, ".pio", "build", ENV, "firmware.elf")
 TC = os.path.join(os.path.expanduser("~"), ".platformio", "packages", "toolchain-atmelavr", "bin")
 

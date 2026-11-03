@@ -1,7 +1,7 @@
 # Копирование прошивки после сборки в Build/ корня проекта (extra_scripts PlatformIO, post:).
 # Результат: Build/<папка проекта PlatformIO>_<окружение><HEX_SUFFIX>.hex (HEX_SUFFIX задаёт pre-скрипт, если есть)
-#   корень (TempDisplay) -> Build/TempDisplay_promini_240x320_ST7789.hex (суффикс - Scripts/display_select.py)
-#   Tests/ChipInfo/     -> Build/ChipInfo_nano.hex
+#   корень (TempDisplay) -> Build/TempDisplay_nano8_240x320_ST7789.hex (суффикс - Scripts/display_select.py)
+#   Tests/ChipInfo/     -> Build/ChipInfo_nano16.hex
 import os
 import shutil
 

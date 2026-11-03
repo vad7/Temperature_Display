@@ -60,6 +60,7 @@ def main():
         i -= 1
     s = "\n".join(lines[:i] + [""] + toc + lines[i:])
     s = re.sub(r"\n{3,}" + re.escape(START), "\n\n" + START, s)
+    s = re.sub(re.escape(END) + r"\n{3,}", END + "\n\n", s)          # иначе каждый запуск добавляет пустую строку
     io.open(README, "w", encoding="utf-8", newline="").write(s)
     print("Оглавление: %d пунктов" % len(build(lines)))
 

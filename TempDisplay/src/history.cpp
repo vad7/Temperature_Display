@@ -1,6 +1,6 @@
-// history.cpp - кольцевые буферы средних значений (int16, десятые °C). ОЗУ: (TREND_SLOTS + GRAPH_SLOTS) * 2 байт.
+// history.cpp - кольцевые буферы (int16, десятые °C). ОЗУ: (TREND_SLOTS + GRAPH_SLOTS + 2 * MINMAX_SLOTS) * 2 байт.
 // Тенденция - наклон прямой МНК по точкам периода (x - номер интервала), умноженный на число интервалов периода.
-// Мин / макс - по точкам периода и по измерениям текущего (незакрытого) интервала.
+// Мин / макс - по измерениям: мин и макс каждого закрытого часа + текущего (незакрытого) часа.
 #include "history.h"
 #include <Arduino.h>
 #include "config.h"
@@ -22,7 +22,10 @@ int16_t s_trendBuf[TREND_SLOTS];
 int16_t s_graphBuf[GRAPH_SLOTS];
 Ring    s_trend = { s_trendBuf, TREND_SLOTS, 0, 0 };
 Ring    s_graph = { s_graphBuf, GRAPH_SLOTS, 0, 0 };
-Acc     s_trendAcc, s_graphAcc;
+int16_t s_minBuf[MINMAX_SLOTS], s_maxBuf[MINMAX_SLOTS];
+Ring    s_min = { s_minBuf, MINMAX_SLOTS, 0, 0 };
+Ring    s_max = { s_maxBuf, MINMAX_SLOTS, 0, 0 };
+Acc     s_trendAcc, s_graphAcc, s_mmAcc;
 bool    s_graphChanged, s_started;
 
 void push(Ring& r, int16_t v)
@@ -59,6 +62,26 @@ bool accClose(Acc& a, Ring& r, uint32_t now, uint32_t slotMs)
     }
     return pushed;
 }
+
+// Закрыть часы мин / макс, истёкшие к моменту now; пустой час - HIST_NONE
+void mmClose(uint32_t now)
+{
+    Acc& a = s_mmAcc;
+    while (now - a.tStart >= MINMAX_SLOT_S * 1000UL) {
+        push(s_min, a.n ? a.mn : HIST_NONE);
+        push(s_max, a.n ? a.mx : HIST_NONE);
+        a.sum = 0;
+        a.n = 0;
+        a.tStart += MINMAX_SLOT_S * 1000UL;
+    }
+}
+
+void mmAdd(MinMax& m, int16_t mn, int16_t mx)
+{
+    if (!m.valid) { m.minC10 = mn; m.maxC10 = mx; m.valid = true; }
+    if (mn < m.minC10) m.minC10 = mn;
+    if (mx > m.maxC10) m.maxC10 = mx;
+}
 }  // namespace
 
 namespace History {
@@ -66,6 +89,7 @@ void add(int16_t c10)
 {
     accAdd(s_trendAcc, c10);
     accAdd(s_graphAcc, c10);
+    accAdd(s_mmAcc, c10);
 }
 
 void tick(uint32_t now)
@@ -74,15 +98,17 @@ void tick(uint32_t now)
         s_started = true;
         s_trendAcc.tStart = now;
         s_graphAcc.tStart = now;
+        s_mmAcc.tStart = now;
         return;
     }
     accClose(s_trendAcc, s_trend, now, TREND_SLOT_S * 1000UL);
+    mmClose(now);
     if (accClose(s_graphAcc, s_graph, now, GRAPH_SLOT_S * 1000UL)) s_graphChanged = true;
 }
 
 Trend trend(uint8_t periodMin)
 {
-    Trend t = { false, 0, false, 0, 0 };
+    Trend t = { false, 0 };
     uint8_t slots = (uint8_t)((uint16_t)periodMin * 60U / TREND_SLOT_S);
     if (slots > s_trend.count) slots = s_trend.count;
 
@@ -96,14 +122,6 @@ Trend trend(uint8_t periodMin)
         const float x = i;
         sx += x; sy += v; sxx += x * x; sxy += x * v;
         n++;
-        if (!t.hasMinMax) { t.minC10 = v; t.maxC10 = v; t.hasMinMax = true; }
-        if (v < t.minC10) t.minC10 = v;
-        if (v > t.maxC10) t.maxC10 = v;
-    }
-    if (s_trendAcc.n) {                                   // текущий интервал - в мин / макс
-        if (!t.hasMinMax) { t.minC10 = s_trendAcc.mn; t.maxC10 = s_trendAcc.mx; t.hasMinMax = true; }
-        if (s_trendAcc.mn < t.minC10) t.minC10 = s_trendAcc.mn;
-        if (s_trendAcc.mx > t.maxC10) t.maxC10 = s_trendAcc.mx;
     }
 
     const uint8_t need = (uint8_t)((uint16_t)periodMin * 60U / TREND_SLOT_S / 2U);
@@ -114,6 +132,19 @@ Trend trend(uint8_t periodMin)
         t.valid = true;
     }
     return t;
+}
+
+MinMax minMax(uint8_t hours)
+{
+    MinMax m = { false, 0, 0 };
+    uint8_t slots = hours ? hours - 1 : 0;                // полных часов, плюс текущий
+    if (slots > s_min.count) slots = s_min.count;
+    for (uint8_t i = s_min.count - slots; i < s_min.count; i++) {
+        const int16_t mn = at(s_min, i);
+        if (mn != HIST_NONE) mmAdd(m, mn, at(s_max, i));
+    }
+    if (s_mmAcc.n) mmAdd(m, s_mmAcc.mn, s_mmAcc.mx);
+    return m;
 }
 
 bool takeGraphChanged()
