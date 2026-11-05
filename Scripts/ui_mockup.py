@@ -126,13 +126,13 @@ class Gfx:
         x1, _, w, _ = self.bounds(text)
         return w + x1
 
-    def print(self, x, y, text, c):                         # курсор - базовая линия
+    def print(self, x, y, text, c, size=1):                 # курсор - базовая линия; size - setTextSize()
         for code in self.font.codes(text):
             off, gw, gh, adv, xo, yo = self.font.glyph(code)
             for i in range(gw * gh):
                 if self.font.bitmap[off + i // 8] & (0x80 >> (i % 8)):
-                    self.pixel(x + xo + i % gw, y + yo + i // gw, c)
-            x += adv
+                    self.fill_rect(x + (xo + i % gw) * size, y + (yo + i // gw) * size, size, size, c)
+            x += adv * size
 
 
 # ---------------------------------------------------------------- повтор ui.cpp
@@ -152,13 +152,15 @@ class Ui:
         self.m = max(2, self.w // UIC["MARGIN_DIV"])
         _, y1, _, h = g.bounds("ЙКу")
         self.asc, self.lh = -y1, h + 1
-        self.aw = self.w * UIC["ARROW_W_PCT"] // 100
+        self.mm_size = UIC["MINMAX_TEXT_SIZE"]
+        self.mm_h = self.mm_size * self.lh
         self.hum_y = self.h - self.m - self.lh
         land = self.w >= self.h
-        band = 2 * self.lh + self.m // 2                   # книжная: строки макс и мин
-        zx, zy = self.m, (self.m + self.lh + self.m // 2) if land else self.m
+        self.aw = self.w * UIC["ARROW_W_PCT"] // 100 if land else self.w - self.mm_x() - 2 * self.m
+        band = 2 * self.mm_h + self.m // 2                 # книжная: строки макс и мин
+        zx, zy = self.m, (self.m + self.mm_h + self.m // 2) if land else self.m
         zw = self.w - 2 * self.m - self.aw if land else self.w - 2 * self.m
-        zh = self.h - 2 * (self.m + self.lh) - self.m if land else self.hum_y - band - 3 * self.m
+        zh = self.h - 2 * (self.m + self.mm_h) - self.m if land else self.hum_y - band - 3 * self.m
         self.dh = zh * UIC["DIGIT_FILL_PCT"] // 100
         self.dw = self.dh * UIC["DIGIT_ASPECT_PCT"] // 100
         dw_max = zw * 10 // UIC["DIGIT_W_DIV10"]
@@ -171,15 +173,22 @@ class Ui:
         self.ax = self.w - self.m - self.aw
         if land:
             self.dy = zy + (zh - self.dh) // 2
-            self.max_y, self.min_y, self.ay, self.ah = self.m, self.hum_y, zy, zh
+            self.max_y, self.min_y = self.m, self.h - self.m - self.mm_h
+            self.ay, self.ah = self.m, self.hum_y - 2 * self.m
         else:                                               # равные зазоры: цифры, макс / мин со стрелкой, влажность
             gap = (self.hum_y - self.m - self.dh - band) // 3
             self.dy = self.m + gap
-            self.max_y = self.dy + self.dh + gap
-            self.min_y, self.ay, self.ah = self.max_y + band - self.lh, self.max_y, band
+            self.max_y = (self.dy + self.dh + self.h - band) // 2   # посередине между низом цифр и низом экрана
+            self.min_y = self.max_y + band - self.mm_h
+            self.ay = self.dy + self.dh + self.m
+            self.ah = self.hum_y - self.m - self.ay
 
     def mm_x(self):                                         # s_mmX: правый край мин / макс
-        return self.m + self.g.text_width(self.c10(UIC["MINMAX_WIDEST_C10"]) + DEG)
+        return self.m + self.mm_size * self.g.text_width(self.c10(UIC["MINMAX_WIDEST_C10"]) + DEG)
+
+    def draw_min_max(self, top, v, c):                      # drawMinMax()
+        s = self.c10(v) + DEG
+        self.g.print(self.mm_x() - self.mm_size * self.g.text_width(s), top + self.mm_size * self.asc, s, c, self.mm_size)
 
     def text(self, x, top, align, s, c):
         w = self.g.text_width(s)
@@ -232,7 +241,7 @@ class Ui:
         if not d:
             return
         cx, cy = self.ax + self.aw // 2, self.ay + self.ah // 2
-        ln = min(self.dh, self.ah) * UIC["ARROW_LEN_PCT"] // 100
+        ln = self.ah * UIC["ARROW_LEN_PCT"] // 100
         hh = ln * UIC["ARROW_HEAD_PCT"] // 100
         hw = min(self.aw // 2 - 1, hh * UIC["ARROW_HEAD_W_PCT"] // 200)
         sw = max(2, hw * 2 * UIC["ARROW_STEM_W_PCT"] // 100)
@@ -257,21 +266,22 @@ class Ui:
         ok = sensor is not None
         self.draw_temp_static()
         self.draw_temp(ok, t_c10)
-        thr = CFG["TREND_THR_DEF_C10"]
+        thr = CFG["TREND_THR_DEF_C100"] / 10                # trend - в десятых
         d = 0
         if ok and trend is not None:
             d = 1 if trend >= thr else -1 if trend <= -thr else 0
         self.draw_arrow(d)
-        top, bot = self.max_y, self.min_y
         if mx is not None:
-            self.text(self.mm_x(), top, 1, self.c10(mx) + DEG, C["COL_MAX"])
+            self.draw_min_max(self.max_y, mx, C["COL_MAX"])
         if not ok:
-            self.text(self.m, bot, 0, "нет датчика", C["COL_ERR"])
-        elif failed:
-            self.text(self.m, bot, 0, "ошибка датчика", C["COL_ERR"])
-        elif mn is not None:
-            self.text(self.mm_x(), bot, 1, self.c10(mn) + DEG, C["COL_MIN"])
-        if ok and sensor == "sht" and hum is not None:
+            self.text(self.m, self.hum_y, 0, "нет датчика", C["COL_ERR"])
+            return
+        if failed:
+            self.text(self.m, self.hum_y, 0, "ошибка датчика", C["COL_ERR"])
+            return
+        if mn is not None:
+            self.draw_min_max(self.min_y, mn, C["COL_MIN"])
+        if sensor == "sht" and hum is not None:
             self.text(self.w - self.m, self.hum_y, 1, "%d%%" % hum, C["COL_EDIT"] if heating else C["COL_TEXT"])
 
     def splash(self, sensor):
@@ -334,7 +344,7 @@ class Ui:
                 g.pixel(x, y, C["COL_PLOT"])
             prev = (x, y)
 
-    VALUES = {"ITEM_THR": "0.5" + DEG, "ITEM_TREND": "30 м", "ITEM_MINMAX": "12 ч", "ITEM_POLL": "10 с",
+    VALUES = {"ITEM_THR": "0.50" + DEG, "ITEM_TREND": "30 м", "ITEM_MINMAX": "12 ч", "ITEM_POLL": "10 с",
               "ITEM_HEATER": "нет", "ITEM_CORR": "0.0" + DEG, "ITEM_ROT": "0" + DEG, "ITEM_SWAP": "нет", "ITEM_BRIGHT": "100%",
               "ITEM_ERRORS": "37/2"}
 
@@ -354,9 +364,9 @@ class Ui:
             top = self.m + self.lh + self.m + (i - first) * rs
             sel = i == item
             g.fill_rect(0, top - (rs - self.lh) // 2, self.w, rs, C["COL_SEL"] if sel else C["COL_BG"])
-            self.text(self.m, top, 0, lab, C["COL_TEXT"])
+            self.text(self.m, top, 0, lab, C["COL_SEL_TEXT"] if sel else C["COL_TEXT"])
             val = edit_value if (sel and edit and edit_value) else self.VALUES[MENU[i][0]]
-            self.text(self.w - self.m, top, 1, val, C["COL_EDIT"] if (sel and edit) else C["COL_TEMP"])
+            self.text(self.w - self.m, top, 1, val, C["COL_SEL_EDIT"] if (sel and edit) else C["COL_SEL_TEXT"] if sel else C["COL_TEMP"])
         top = self.h - self.m - self.lh
         hint = "ДН Кн.1 - сохранить" if edit else "ДН Кн.1 - сброс" if item == ITEM["ITEM_ERRORS"] else "ДН Кн.1 - правка"
         self.text(self.w // 2, top, 2, hint, C["COL_TEXT"])

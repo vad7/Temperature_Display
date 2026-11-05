@@ -6,8 +6,9 @@
 #include "config.h"
 
 #define SETTINGS_MAGIC    0x7D     // метка блока
-#define SETTINGS_VERSION  6       // при изменении структуры Settings - увеличить (2: + heater, 3: + flip, 4: + mmIdx,
-                                   // 5: flip -> rot + swapBtn, + brightIdx, 6: + corrC10)
+#define SETTINGS_VERSION  7       // при изменении структуры Settings - увеличить (2: + heater, 3: + flip, 4: + mmIdx,
+                                   // 5: flip -> rot + swapBtn, + brightIdx, 6: + corrC10,
+                                   // 7: thrC10 -> thrC100)
 
 namespace {
 const uint8_t POLL[]  PROGMEM = POLL_PERIODS_S;
@@ -41,7 +42,7 @@ void defaults(Settings& s)
 {
     s.pollIdx  = indexOf(POLL, sizeof(POLL), POLL_PERIOD_DEF_S);
     s.trendIdx = indexOf(TREND, sizeof(TREND), TREND_PERIOD_DEF_MIN);
-    s.thrC10   = TREND_THR_DEF_C10;
+    s.thrC100  = TREND_THR_DEF_C100;
     s.heater   = HEATER_DEF;
     s.rot      = ROT_DEF;
     s.swapBtn  = SWAP_BTN_DEF;
@@ -69,7 +70,7 @@ void load()
     EEPROM.get(EE_SETTINGS_ADDR, st);
     const bool ok = st.magic == SETTINGS_MAGIC && st.version == SETTINGS_VERSION && st.crc == crcOf(st)
                     && st.s.pollIdx < sizeof(POLL) && st.s.trendIdx < sizeof(TREND)
-                    && st.s.thrC10 >= TREND_THR_MIN_C10 && st.s.thrC10 <= TREND_THR_MAX_C10
+                    && st.s.thrC100 >= TREND_THR_MIN_C100 && st.s.thrC100 <= TREND_THR_MAX_C100
                     && st.s.heater <= 1 && st.s.rot < ROT_COUNT && st.s.swapBtn <= 1
                     && st.s.brightIdx < sizeof(BRIGHT) && st.s.mmIdx < sizeof(MINMAX)
                     && st.s.corrC10 >= -TEMP_CORR_MAX_C10 && st.s.corrC10 <= TEMP_CORR_MAX_C10;

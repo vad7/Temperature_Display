@@ -7,7 +7,8 @@ rem   скорость - 57600 по умолчанию; не задана и н�
 rem   протокол - urclock (urboot, по умолчанию) или arduino (Optiboot / ATmegaBOOT - скорость по таблице Readme §8)
 rem   reset    - нет DTR (автосброса): Enter, затем, пока идут попытки avrdude, нажать и отпустить RESET платы
 rem   пример:  Scripts\flash.bat COM5 Build\TempDisplay_nano16_240x320_ST7789.hex
-rem avrdude - Tools\avrdude\ проекта (8.1, вместе с avrdude.conf), нет - PlatformIO, нет - PATH (7.1 и новее).
+rem avrdude - рядом с батником (архив Build\TempDisplay_flash.zip, там же и hex), затем Tools\avrdude\ проекта
+rem (8.1, вместе с avrdude.conf), нет - PlatformIO, нет - PATH (7.1 и новее).
 rem Файл - UTF-8 с CRLF; консоль на время работы - UTF-8 (chcp 65001), при выходе - прежняя кодовая страница.
 rem Шрифт консоли мелкий после chcp 65001 - в консоли растровый шрифт: свойства окна - Шрифт - Consolas.
 for /f "tokens=2 delims=:." %%c in ('chcp') do set "OLDCP=%%c"
@@ -53,7 +54,10 @@ if /i "%PROTO%"=="urclock" set "OPT=-xnometadata"
 rem ручной сброс: каждая попытка - с 0x30 (по нему urboot подстраивает скорость), иначе после первой - только 0x20
 if defined MANUAL if /i "%PROTO%"=="urclock" set "OPT=%OPT% -xstrict -xnoautoreset"
 
-set "AVRDIR=%ROOT%\Tools\avrdude"
+set "HEXDIR=%ROOT%\Build"
+if exist "%~dp0avrdude.exe" set "HEXDIR=%~dp0."
+set "AVRDIR=%~dp0."
+if not exist "%AVRDIR%\avrdude.exe" set "AVRDIR=%ROOT%\Tools\avrdude"
 if not exist "%AVRDIR%\avrdude.exe" set "AVRDIR=%USERPROFILE%\.platformio\packages\tool-avrdude"
 set "AVRDUDE=%AVRDIR%\avrdude.exe"
 set "CONFARG=-C "%AVRDIR%\avrdude.conf""
@@ -65,7 +69,7 @@ if not exist "%AVRDUDE%" (
 
 if "%HEX%"=="" (
     set N=0
-    for %%F in ("%ROOT%\Build\TempDisplay_*.hex" "%ROOT%\Build\ChipInfo_*.hex") do (
+    for %%F in ("%HEXDIR%\TempDisplay_*.hex" "%HEXDIR%\ChipInfo_*.hex") do (
         set /a N+=1
         set "F!N!=%%~fF"
         echo   !N!. %%~nxF
@@ -80,6 +84,14 @@ if "%PORT%"=="" (
     echo Порты:
     powershell -NoProfile -Command "[System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object"
     set /p PORT="Порт (например COM5): "
+)
+if defined ASK if not defined MANUAL (
+    set "R="
+    set /p R="Нет вывода DTR, сброс кнопкой RESET? r - да, Enter - нет: "
+    if /i "!R!"=="r" (
+        set "MANUAL=1"
+        if /i "%PROTO%"=="urclock" set "OPT=!OPT! -xstrict -xnoautoreset"
+    )
 )
 
 echo.

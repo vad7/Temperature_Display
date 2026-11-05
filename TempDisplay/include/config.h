@@ -57,7 +57,9 @@
 #define COL_DOWN           0x34DF         // стрелка «холодает»
 #define COL_MAX            0xFA08         // максимум на главном экране (красный, светлее - мелкий текст)
 #define COL_MIN            0x4D7F         // минимум на главном экране (синий, светлее - мелкий текст)
-#define COL_SEL            0x3186         // фон выбранного пункта настроек
+#define COL_SEL            0x867F         // фон выбранного пункта настроек (светло-голубой)
+#define COL_SEL_TEXT       0x0000         // текст выбранного пункта (на светлом фоне - тёмный)
+#define COL_SEL_EDIT       0xA800         // значение в режиме правки (на светлом фоне, тёмно-красное)
 #define COL_EDIT           0xFFE0         // значение в режиме правки
 #define COL_GRID           0x4208         // сетка графика
 #define COL_PLOT           0x07FF         // линия графика
@@ -128,9 +130,10 @@ enum class SensorKind : uint8_t { None, Sht40, Ds18b20 };
 #define MINMAX_PERIOD_DEF_H  12
 
 // Тенденция и история
-#define TREND_THR_MIN_C10    1        // порог стрелки тенденции (настройка), десятые °C: 0.1 ... 2.0, шаг 0.1
-#define TREND_THR_MAX_C10    20
-#define TREND_THR_DEF_C10    5        // 0.5 °C за период (улица)
+#define TREND_THR_STEP_C100  2        // порог стрелки тенденции (настройка), сотые °C: 0.02 ... 2.00, шаг 0.02
+#define TREND_THR_MIN_C100   TREND_THR_STEP_C100
+#define TREND_THR_MAX_C100   200
+#define TREND_THR_DEF_C100   50       // 0.50 °C за период (улица)
 #define TREND_SLOT_S         120      // точка тенденции - среднее за 2 мин
 #define TREND_SLOTS          90       // 90 x 2 мин = 3 ч - максимальный период
 #define MINMAX_SLOT_S        3600     // мин / макс - по измерениям, отдельно за каждый час

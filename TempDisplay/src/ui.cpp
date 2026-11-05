@@ -35,8 +35,10 @@ static Adafruit_ST7735 tft(PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
 
 // ---------------------------------------------------------------- разметка (доли экрана)
 #define MARGIN_DIV        40     // поле = ширина / 40
-#define ARROW_W_PCT       18     // зона стрелки - % ширины справа
-#define ARROW_LEN_PCT     75     // длина стрелки - % высоты зоны крупных цифр
+#define ARROW_W_PCT       20     // альбомная: зона стрелки - % ширины справа
+#define ARROW_LEN_PCT     90     // длина стрелки - % высоты её зоны
+#define MINMAX_TEXT_SIZE  2      // мин / макс - шрифт интерфейса, увеличенный (setTextSize)
+#define TEXT_SIZE_UI      1      // остальной текст
 #define ARROW_HEAD_PCT    45     // головка (треугольник) - % длины стрелки
 #define ARROW_HEAD_W_PCT  100    // ширина головки - % её высоты (меньше - острее)
 #define ARROW_STEM_W_PCT  35     // толщина стержня - % ширины головки
@@ -66,6 +68,8 @@ static Adafruit_ST7735 tft(PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
 enum class Screen : uint8_t { Splash, Main, Graph, List, Edit };
 enum : uint8_t { ALIGN_LEFT, ALIGN_RIGHT, ALIGN_CENTER };   // выравнивание drawText()
 enum : int8_t { ARROW_DOWN = -1, ARROW_NONE = 0, ARROW_UP = 1 };   // стрелка тенденции
+// нижняя строка главного экрана: влажность 0..100 (жёлтая - с BOT_HEATING) или одно из этих значений
+enum : int16_t { BOT_EMPTY = -3, BOT_FAILED, BOT_NO_SENSOR, BOT_HEATING = 256 };
 // ячейки крупных цифр слева направо: сотни / знак, десятки, единицы, (точка), десятые
 enum : uint8_t { CELL_HUND, CELL_TENS, CELL_ONES, CELL_FRAC, CELL_COUNT };
 
@@ -101,10 +105,11 @@ int16_t s_asc, s_lh;                   // шрифт: высота над баз
 int16_t s_dx, s_dy, s_dw, s_dh, s_t;   // крупные цифры: начало, размер цифры, толщина сегмента
 int16_t s_ax, s_ay, s_aw, s_ah;        // зона стрелки
 int16_t s_mmX;                         // правый край мин / макс (не скачут при смене числа знаков)
-int16_t s_maxY, s_minY, s_humY;        // верх строк макс, мин (и ошибки датчика), влажности
-int16_t s_txtW;                        // ширина строк макс / мин (стирание, до стрелки / влажности)
+int16_t s_maxY, s_minY, s_humY;        // верх строк макс, мин, влажности (и ошибки датчика)
+int16_t s_txtW, s_mmH;                 // ширина строк макс / мин (стирание, до стрелки) и их высота
 uint8_t s_cell[CELL_COUNT];            // текущие коды ячеек (CELL_*)
 int8_t  s_arrow = ARROW_NONE;          // нарисованная стрелка (ARROW_*)
+int16_t s_shMax, s_shMin, s_shBot;     // нарисованные макс, мин (HIST_NONE - пусто) и нижняя строка (BOT_*)
 
 // ---------------------------------------------------------------- текст
 // UTF-8 из PROGMEM -> коды шрифта в s_buf (дописывается с позиции pos). Возвращает новую позицию.
@@ -264,7 +269,7 @@ void drawArrow(int8_t dir)
     tft.fillRect(s_ax, s_ay, s_aw, s_ah, COL_BG);
     if (dir == ARROW_NONE) return;
     const int16_t cx = s_ax + s_aw / 2, cy = s_ay + s_ah / 2;
-    const int16_t len = (int16_t)((int32_t)min(s_dh, s_ah) * ARROW_LEN_PCT / 100);   // длина стрелки
+    const int16_t len = (int16_t)((int32_t)s_ah * ARROW_LEN_PCT / 100);              // длина стрелки
     const int16_t hh = (int16_t)((int32_t)len * ARROW_HEAD_PCT / 100);               // высота головки
     const int16_t hw = min((int16_t)(s_aw / 2 - 1), (int16_t)((int32_t)hh * ARROW_HEAD_W_PCT / 200));  // полуширина
     const int16_t sw = max((int16_t)2, (int16_t)((int32_t)hw * 2 * ARROW_STEM_W_PCT / 100));         // стержень
@@ -291,17 +296,20 @@ void layout()
     s_asc = -y1;
     s_lh = (int16_t)h + 1;
     appendChar(appendC10(0, MINMAX_WIDEST_C10), CHAR_DEG);
+    tft.setTextSize(MINMAX_TEXT_SIZE);
     s_mmX = s_m + textWidth();
+    tft.setTextSize(TEXT_SIZE_UI);
+    s_mmH = MINMAX_TEXT_SIZE * s_lh;
 
     // зона крупных цифр: альбомная - между строкой макс и строкой мин, справа стрелка; книжная - во всю ширину, под
     // цифрами строки макс и мин, справа от них стрелка, внизу влажность
-    s_aw = (int16_t)((int32_t)s_w * ARROW_W_PCT / 100);
     s_humY = s_h - s_m - s_lh;
     const bool land = s_w >= s_h;
-    const int16_t band = 2 * s_lh + s_m / 2;              // книжная: строки макс и мин
-    const int16_t zx = s_m, zy = land ? s_m + s_lh + s_m / 2 : s_m;
+    s_aw = land ? (int16_t)((int32_t)s_w * ARROW_W_PCT / 100) : s_w - s_mmX - 2 * s_m;
+    const int16_t band = 2 * s_mmH + s_m / 2;             // книжная: строки макс и мин
+    const int16_t zx = s_m, zy = land ? s_m + s_mmH + s_m / 2 : s_m;
     const int16_t zw = land ? s_w - 2 * s_m - s_aw : s_w - 2 * s_m;
-    const int16_t zh = land ? s_h - 2 * (s_m + s_lh) - s_m : s_humY - band - 3 * s_m;
+    const int16_t zh = land ? s_h - 2 * (s_m + s_mmH) - s_m : s_humY - band - 3 * s_m;
     s_dh = (int16_t)((int32_t)zh * DIGIT_FILL_PCT / 100);
     s_dw = (int16_t)((int32_t)s_dh * DIGIT_ASPECT_PCT / 100);
     const int16_t dwMax = (int16_t)((int32_t)zw * 10 / DIGIT_W_DIV10);
@@ -316,20 +324,40 @@ void layout()
     if (land) {
         s_dy = zy + (zh - s_dh) / 2;
         s_maxY = s_m;
-        s_minY = s_humY;
-        s_ay = zy;
-        s_ah = zh;
+        s_minY = s_h - s_m - s_mmH;
+        s_ay = s_m;                                       // стрелка - от верха до строки влажности
+        s_ah = s_humY - 2 * s_m;
         s_txtW = s_w * 2 / 3 - s_m;
-    } else {                                              // цифры, макс / мин со стрелкой, влажность - равные зазоры
+    } else {
         const int16_t gap = (s_humY - s_m - s_dh - band) / 3;
         s_dy = s_m + gap;
-        s_maxY = s_dy + s_dh + gap;
-        s_minY = s_maxY + band - s_lh;
-        s_ay = s_maxY;
-        s_ah = band;
+        s_maxY = (s_dy + s_dh + s_h - band) / 2;          // посередине между низом цифр и низом экрана
+        s_minY = s_maxY + band - s_mmH;
+        s_ay = s_dy + s_dh + s_m;                         // стрелка - от цифр до строки влажности
+        s_ah = s_humY - s_m - s_ay;
         s_txtW = s_ax - s_m;
     }
 }
+
+void drawMinMax(int16_t top, int16_t c10, uint16_t color)   // по правому краю s_mmX, увеличенным шрифтом
+{
+    appendChar(appendC10(0, c10), CHAR_DEG);
+    tft.setTextSize(MINMAX_TEXT_SIZE);
+    tft.setTextColor(color);
+    tft.setCursor(s_mmX - textWidth(), top + MINMAX_TEXT_SIZE * s_asc);
+    tft.print(s_buf);
+    tft.setTextSize(TEXT_SIZE_UI);
+}
+
+void drawMmLine(int16_t top, int16_t v, int16_t& shown, uint16_t color)   // строка макс / мин - только при изменении
+{
+    if (v == shown) return;
+    shown = v;
+    tft.fillRect(s_m, top, s_txtW, s_mmH, COL_BG);
+    if (v != HIST_NONE) drawMinMax(top, v, color);
+}
+
+bool botIsErr(int16_t bot) { return bot == BOT_FAILED || bot == BOT_NO_SENSOR; }
 
 void drawMainValues()
 {
@@ -339,35 +367,33 @@ void drawMainValues()
     const Trend t = History::trend(Cfg::trendMin());
     int8_t dir = ARROW_NONE;
     if (ok && t.valid) {
-        if (t.deltaC10 >= (int16_t)Cfg::s.thrC10) dir = ARROW_UP;
-        else if (t.deltaC10 <= -(int16_t)Cfg::s.thrC10) dir = ARROW_DOWN;
+        if (t.deltaC100 >= (int16_t)Cfg::s.thrC100) dir = ARROW_UP;
+        else if (t.deltaC100 <= -(int16_t)Cfg::s.thrC100) dir = ARROW_DOWN;
     }
     drawArrow(dir);
 
-    // макс и мин слева (за Cfg::mmHours(), только значения; строки - layout())
+    // макс, мин и нижняя строка - только при изменении, иначе мерцают при каждом измерении
     const MinMax mm = History::minMax(Cfg::mmHours());
-    tft.fillRect(s_m, s_maxY, s_txtW, s_lh, COL_BG);
-    tft.fillRect(s_m, s_minY, s_txtW, s_lh, COL_BG);
-    if (mm.valid) {
-        appendChar(appendC10(0, mm.maxC10), CHAR_DEG);
-        drawText(s_mmX, s_maxY, ALIGN_RIGHT, COL_MAX);
+    const bool failed = Sensor::failed();                 // температура - последняя удачная; мин и влажности нет
+    int16_t bot = BOT_EMPTY;
+    if (!ok) bot = BOT_NO_SENSOR;
+    else if (failed) bot = BOT_FAILED;
+    else if (Sensor::hasHumidity()) bot = (int16_t)Sensor::humidity() + (Sensor::heating() ? BOT_HEATING : 0);
+    const bool botChanged = bot != s_shBot;
+    if (botChanged) {                                     // надпись - во всю ширину; в альбомной и по строке мин,
+        if (botIsErr(bot) || botIsErr(s_shBot)) tft.fillRect(s_m, s_humY, s_w - 2 * s_m, s_lh, COL_BG);   // её тогда нет
+        else tft.fillRect(s_w * 2 / 3, s_humY, s_w / 3 - s_m, s_lh, COL_BG);
+        s_shBot = bot;
     }
-    if (!ok) {
-        utf8ToFont(PSTR("нет датчика"), 0);
-        drawText(s_m, s_minY, ALIGN_LEFT, COL_ERR);
-    } else if (Sensor::failed()) {                        // температура - последняя удачная
-        utf8ToFont(PSTR("ошибка датчика"), 0);
-        drawText(s_m, s_minY, ALIGN_LEFT, COL_ERR);
-    } else if (mm.valid) {
-        appendChar(appendC10(0, mm.minC10), CHAR_DEG);
-        drawText(s_mmX, s_minY, ALIGN_RIGHT, COL_MIN);
-    }
+    drawMmLine(s_maxY, mm.valid ? mm.maxC10 : HIST_NONE, s_shMax, COL_MAX);
+    drawMmLine(s_minY, ok && !failed && mm.valid ? mm.minC10 : HIST_NONE, s_shMin, COL_MIN);
+    if (!botChanged) return;
 
-    // влажность - внизу справа
-    tft.fillRect(s_w * 2 / 3, s_humY, s_w / 3 - s_m, s_lh, COL_BG);
-    if (ok && Sensor::hasHumidity()) {
-        uint8_t p = appendNum(0, Sensor::humidity());
-        appendChar(p, '%');
+    if (botIsErr(bot)) {
+        utf8ToFont(bot == BOT_NO_SENSOR ? PSTR("нет датчика") : PSTR("ошибка датчика"), 0);
+        drawText(s_m, s_humY, ALIGN_LEFT, COL_ERR);
+    } else if (bot != BOT_EMPTY) {                        // влажность - внизу справа
+        appendChar(appendNum(0, Sensor::humidity()), '%');
         drawText(s_w - s_m, s_humY, ALIGN_RIGHT, Sensor::heating() ? COL_EDIT : COL_TEXT);   // жёлтая - датчик остывает
     }
 }
@@ -414,6 +440,8 @@ void showMain()
     s_screen = Screen::Main;
     backlight(Cfg::bright());                             // отменённая правка яркости - назад
     tft.fillScreen(COL_BG);
+    s_shMax = s_shMin = HIST_NONE;
+    s_shBot = BOT_EMPTY;
     for (uint8_t i = 0; i < CELL_COUNT; i++) s_cell[i] = SEG_BLANK;
     s_arrow = ARROW_NONE;
     drawTempStatic();
@@ -513,7 +541,11 @@ void itemValue(uint8_t i, const Settings& st)
     uint8_t p;
     switch (i) {
         case ITEM_THR:
-            appendChar(appendC10(0, st.thrC10), CHAR_DEG);
+            p = appendNum(0, st.thrC100 / 100);           // «0.50°»
+            s_buf[p++] = '.';
+            s_buf[p++] = (char)('0' + st.thrC100 / 10 % 10);
+            s_buf[p++] = (char)('0' + st.thrC100 % 10);
+            appendChar(p, CHAR_DEG);
             break;
         case ITEM_TREND: {
             const uint8_t m = Cfg::trendMin(st.trendIdx);
@@ -563,9 +595,9 @@ void drawRow(uint8_t i)
     const int16_t rs = rowStep();
     tft.fillRect(0, top - (rs - s_lh) / 2, s_w, rs, sel ? COL_SEL : COL_BG);
     itemLabel(i);
-    drawText(s_m, top, ALIGN_LEFT, COL_TEXT);
+    drawText(s_m, top, ALIGN_LEFT, sel ? COL_SEL_TEXT : COL_TEXT);
     itemValue(i, edit ? s_edit : Cfg::s);
-    drawText(s_w - s_m, top, ALIGN_RIGHT, edit ? COL_EDIT : COL_TEMP);
+    drawText(s_w - s_m, top, ALIGN_RIGHT, edit ? COL_SEL_EDIT : sel ? COL_SEL_TEXT : COL_TEMP);
 }
 
 bool scrollToItem()                                       // выбранный пункт - в видимых строках; true - список сдвинут
@@ -607,10 +639,10 @@ void editStep(int8_t d)                                   // правка зна
     uint8_t n;
     switch (s_item) {
         case ITEM_THR: {
-            int16_t v = s_edit.thrC10 + d;
-            if (v > TREND_THR_MAX_C10) v = TREND_THR_MIN_C10;
-            if (v < TREND_THR_MIN_C10) v = TREND_THR_MAX_C10;
-            s_edit.thrC10 = (uint8_t)v;
+            int16_t v = s_edit.thrC100 + d * TREND_THR_STEP_C100;
+            if (v > TREND_THR_MAX_C100) v = TREND_THR_MIN_C100;
+            if (v < TREND_THR_MIN_C100) v = TREND_THR_MAX_C100;
+            s_edit.thrC100 = (uint8_t)v;
             break;
         }
         case ITEM_TREND:

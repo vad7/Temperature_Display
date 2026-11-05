@@ -6,7 +6,7 @@
 struct Settings {
     uint8_t pollIdx;     // индекс в POLL_PERIODS_S
     uint8_t trendIdx;    // индекс в TREND_PERIODS_MIN
-    uint8_t thrC10;      // порог стрелки тенденции, десятые °C
+    uint8_t thrC100;     // порог стрелки тенденции, сотые °C
     uint8_t heater;      // прогрев SHT40 при высокой влажности: 0 - нет, 1 - да
     uint8_t rot;         // поворот экрана: четверти оборота от TFT_ROTATION, 0 .. ROT_COUNT - 1
     uint8_t swapBtn;     // Кн.1 / Кн.2 местами: 0 - нет, 1 - да

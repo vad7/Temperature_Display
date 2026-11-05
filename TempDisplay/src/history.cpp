@@ -106,6 +106,8 @@ void tick(uint32_t now)
     if (accClose(s_graphAcc, s_graph, now, GRAPH_SLOT_S * 1000UL)) s_graphChanged = true;
 }
 
+#define C100_PER_C10 10.0f     // точки - в десятых °C, порог стрелки - в сотых
+
 Trend trend(uint8_t periodMin)
 {
     Trend t = { false, 0 };
@@ -128,7 +130,7 @@ Trend trend(uint8_t periodMin)
     const float den = n * sxx - sx * sx;
     if (n >= 2 && n >= need && den != 0.0f) {
         const float slope = (n * sxy - sx * sy) / den;  // десятые °C за интервал
-        t.deltaC10 = (int16_t)lroundf(slope * (float)((uint16_t)periodMin * 60U / TREND_SLOT_S));
+        t.deltaC100 = (int16_t)lroundf(slope * C100_PER_C10 * (float)((uint16_t)periodMin * 60U / TREND_SLOT_S));
         t.valid = true;
     }
     return t;

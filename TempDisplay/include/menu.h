@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define MENU_ITEMS(X)                        \
-    X(ITEM_THR,    "Порог стрелки")          \
+    X(ITEM_THR,    "Прог стрел.")            \
     X(ITEM_TREND,  "Тенденция за")           \
     X(ITEM_MINMAX, "Мин/макс за")            \
     X(ITEM_POLL,   "Опрос датчика")          \
