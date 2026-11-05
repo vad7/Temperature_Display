@@ -156,9 +156,9 @@ class Ui:
         self.mm_h = self.mm_size * self.lh
         self.hum_y = self.h - self.m - self.lh
         land = self.w >= self.h
-        self.aw = self.w * UIC["ARROW_W_PCT"] // 100 if land else self.w - self.mm_x() - 2 * self.m
+        self.aw = self.w * UIC["ARROW_W_PCT"] // 100 if land else self.w - self.mm_w() - 3 * self.m
         band = 2 * self.mm_h + self.m // 2                 # книжная: строки макс и мин
-        zx, zy = self.m, (self.m + self.mm_h + self.m // 2) if land else self.m
+        zx, zy = (self.m + self.aw) if land else self.m, (self.m + self.mm_h + self.m // 2) if land else self.m
         zw = self.w - 2 * self.m - self.aw if land else self.w - 2 * self.m
         zh = self.h - 2 * (self.m + self.mm_h) - self.m if land else self.hum_y - band - 3 * self.m
         self.dh = zh * UIC["DIGIT_FILL_PCT"] // 100
@@ -170,7 +170,7 @@ class Ui:
         self.t = max(2, self.dw // UIC["SEG_T_DIV"])
         total = self.dw * UIC["DIGIT_W_DIV10"] // 10
         self.dx = zx + (zw - total) // 2
-        self.ax = self.w - self.m - self.aw
+        self.ax = self.m
         if land:
             self.dy = zy + (zh - self.dh) // 2
             self.max_y, self.min_y = self.m, self.h - self.m - self.mm_h
@@ -183,12 +183,12 @@ class Ui:
             self.ay = self.dy + self.dh + self.m
             self.ah = self.hum_y - self.m - self.ay
 
-    def mm_x(self):                                         # s_mmX: правый край мин / макс
-        return self.m + self.mm_size * self.g.text_width(self.c10(UIC["MINMAX_WIDEST_C10"]) + DEG)
+    def mm_w(self):                                         # mmW в layout(): самое широкое мин / макс
+        return self.mm_size * self.g.text_width(self.c10(UIC["MINMAX_WIDEST_C10"]) + DEG)
 
     def draw_min_max(self, top, v, c):                      # drawMinMax()
         s = self.c10(v) + DEG
-        self.g.print(self.mm_x() - self.mm_size * self.g.text_width(s), top + self.mm_size * self.asc, s, c, self.mm_size)
+        self.g.print(self.w - self.m - self.mm_size * self.g.text_width(s), top + self.mm_size * self.asc, s, c, self.mm_size)
 
     def text(self, x, top, align, s, c):
         w = self.g.text_width(s)
@@ -282,7 +282,7 @@ class Ui:
         if mn is not None:
             self.draw_min_max(self.min_y, mn, C["COL_MIN"])
         if sensor == "sht" and hum is not None:
-            self.text(self.w - self.m, self.hum_y, 1, "%d%%" % hum, C["COL_EDIT"] if heating else C["COL_TEXT"])
+            self.text(self.m, self.hum_y, 0, "%d%%" % hum, C["COL_EDIT"] if heating else C["COL_TEXT"])
 
     def splash(self, sensor):
         """Заставка при включении (showSplash в ui.cpp)."""
